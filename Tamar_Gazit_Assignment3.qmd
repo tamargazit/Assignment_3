@@ -1,0 +1,317 @@
+---
+title: "Tamar_Gazit_Assignment_3"
+author: "Tamar Gazit (B00842040)"
+format: html
+editor: visual
+---
+
+## Data Preparation
+
+```{r}
+# ------------------------------------------------------------
+# Load Required Packages
+# ------------------------------------------------------------
+library(haven)         # Read SPSS files
+library(dplyr)         # Data wrangling
+library(ggplot2)       # Plotting
+library(flexplot)      # Visualization and mixed model tools
+library(apaTables)     # APA-style tables
+library(psych)         # Descriptive statistics
+library(lme4)          # Linear mixed models
+
+# ------------------------------------------------------------
+# Load and Prepare Raw Data
+# ------------------------------------------------------------
+data <- read_sav("P6003.A4.sav")
+
+# Convert data types
+data$id <- as.factor(data$id)
+data$day <- as.numeric(data$day)
+
+```
+
+## Data Exploration
+
+```{r}
+# ------------------------------------------------------------
+# Descriptive Statistics & Correlation Table (Raw Variables)
+# ------------------------------------------------------------
+vars_raw <- data %>% select(swl, tipm.E, tipm.N)
+names(vars_raw) <- c("Satisfaction with Life", "Extraversion", "Neuroticism")
+
+describe(vars_raw)  # Prints M, SD, Skew, Kurtosis, etc.
+apa.cor.table(vars_raw, filename = "Table1_APA_Descriptives.doc")
+
+# ------------------------------------------------------------
+# Screen Raw Data (Visualize Univariate Distributions)
+# ------------------------------------------------------------
+# Check for normality, skew, outliers, floor/ceiling effects
+
+flexplot(swl ~ 1, data = data)         # Satisfaction With Life
+flexplot(tipm.E ~ 1, data = data)      # Extraversion
+flexplot(tipm.N ~ 1, data = data)      # Neuroticism
+
+# ------------------------------------------------------------
+# Explore Raw Data (Visualize Bivariate Relationships)
+# ------------------------------------------------------------
+# Visual inspection of SWL ~ predictors (H1 & H2)
+
+flexplot(swl ~ tipm.E, data = data)    # H1: SWL ~ Extraversion
+flexplot(swl ~ tipm.N, data = data)    # H2: SWL ~ Neuroticism
+
+# ------------------------------------------------------------
+# Fit preliminary model for assumption checking
+# ------------------------------------------------------------
+model_assump_check <- lmer(swl ~ tipm.E + tipm.N + (1 | id), data = data)
+
+# Add residuals and fitted values to dataset used in model
+data_model_used <- model.frame(model_assump_check)
+data_model_used$resid <- residuals(model_assump_check)
+data_model_used$fitted <- fitted(model_assump_check)
+
+# ------------------------------------------------------------
+# Linearity / Homoscedasticity: Residuals vs Predictors
+# ------------------------------------------------------------
+flexplot(resid ~ tipm.E, data = data_model_used)
+flexplot(resid ~ tipm.N, data = data_model_used)
+
+# ------------------------------------------------------------
+# Normality of Residuals: Histogram + Q-Q Plot
+# ------------------------------------------------------------
+# Histogram (already present)
+flexplot(resid ~ 1, data = data_model_used)
+
+# Q-Q plot for residuals (optional but recommended)
+qqnorm(data_model_used$resid)
+qqline(data_model_used$resid, col = "red")
+
+# ------------------------------------------------------------
+# Residuals vs Fitted Values (for linearity and variance)
+# ------------------------------------------------------------
+library(ggplot2)
+ggplot(data_model_used, aes(x = fitted, y = resid)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "loess", color = "blue") +
+  labs(
+    title = "Residuals vs Fitted Values",
+    x = "Fitted Values",
+    y = "Residuals"
+  ) +
+  theme_minimal()
+
+# ------------------------------------------------------------
+# ICC (to justify multilevel model)
+# ------------------------------------------------------------
+null_model <- lmer(swl ~ 1 + (1 | id), data = data)
+performance::icc(null_model)
+
+
+```
+
+## Model Building: Hypothesis Testing 
+
+#### Hypothesis 1 and 2
+
+```{r}
+# -------------------------------------------------------------
+# STEP 1: Reduced model with extraversion only (fixed effect)
+# -------------------------------------------------------------
+# This model tests whether Extraversion (tipm.E) predicts SWL. It includes a random intercept for participant (id) to account for repeated measures.
+
+model_fixed_E <- lmer(swl ~ tipm.E + (1 | id), data = data)
+
+# View summary with coefficients and p-values
+summary(model_fixed_E)
+
+
+# ---------------------------------------------
+# STEP 2: Add a random slope for extraversion
+# ---------------------------------------------
+# This model allows the slope for Extraversion to vary between individuals. It accounts for the possibility that the effect of Extraversion on SWL differs person-to-person.
+
+model_random_E <- lmer(swl ~ tipm.E + (tipm.E | id), data = data)
+
+# View model summary
+summary(model_random_E)
+
+# ----------------------------------------------
+# STEP 3: Compare fixed vs. random slope model
+# ----------------------------------------------
+# Compare the fixed and random slope models visually and statistically
+model.comparison(model_fixed_E, model_random_E)
+
+
+# ---------------------------------------------
+# STEP 4: Add neuroticism as a fixed effect
+# ---------------------------------------------
+# Add Neuroticism (tipm.N) as a fixed predictor while keeping Extraversion slope random
+model_fixed_E_N <- lmer(swl ~ tipm.E + tipm.N + (tipm.E | id), data = data)
+
+# View summary
+summary(model_fixed_E_N)
+
+# Compare to previous model (without tipm.N)
+model.comparison(model_random_E, model_fixed_E_N)
+
+
+# ---------------------------------------------------
+# STEP 5: Add a random slope for neuroticism as well
+# ---------------------------------------------------
+# Allow both Extraversion and Neuroticism slopes to vary across participants
+model_random_E_N <- lmer(swl ~ tipm.E + tipm.N + (tipm.E + tipm.N | id), data = data)
+
+# View summary
+summary(model_random_E_N)
+
+# Compare fixed vs. full random slope model
+model.comparison(model_fixed_E_N, model_random_E_N)
+
+
+# ----------------------------------------------
+# STEP 6: Visualize overall model predictions vs. actual
+# ----------------------------------------------
+# This shows how well the predicted values from the model align with observed values
+visualize(model_random_E_N, plot = "model")
+
+# Check residual diagnostics to show residuals vs. predicted values to assess homoscedasticity (equal variance) and model fit
+visualize(model_random_E_N, plot = "residuals")
+
+# Get summary statistics
+summary(model_random_E_N)
+
+# Get fixed effects + SEs, CIs, and p-values
+library(broom.mixed)
+tidy(model_random_E_N, effects = "fixed", conf.int = TRUE)
+
+
+```
+
+#### Hypothesis 3
+
+```{r}
+# Decompose predictors into between- and within-person
+data_decomposed <- data %>%
+  group_by(id) %>%
+  mutate(
+    tipm.E_mean = mean(tipm.E, na.rm = TRUE),         # Between-person Extraversion
+    tipm.N_mean = mean(tipm.N, na.rm = TRUE),         # Between-person Neuroticism
+    tipm.E_dev  = tipm.E - tipm.E_mean,               # Within-person Extraversion
+    tipm.N_dev  = tipm.N - tipm.N_mean                # Within-person Neuroticism
+  ) %>%
+  ungroup()
+
+# ---------------------------------------------------
+# Random intercepts model with decomposed predictors
+# ---------------------------------------------------
+# This model estimates how both between-person (mean) and within-person (dev) components of Extraversion and Neuroticism predict SWL. 
+
+# It includes random intercepts only (no random slopes yet)
+
+model_intercepts <- lmer(
+  swl ~ tipm.E_mean + tipm.E_dev + tipm.N_mean + tipm.N_dev + 
+    (1 | id),
+  data = data_decomposed
+)
+
+summary(model_intercepts)
+
+# ---------------------------------------------------
+# Random slopes model for within-person effects
+# ---------------------------------------------------
+# This model allows day-to-day slopes of Extraversion and Neuroticism to vary across people.
+
+model_slopes <- lmer(
+  swl ~ tipm.E_mean + tipm.E_dev + tipm.N_mean + tipm.N_dev +
+    (tipm.E_dev + tipm.N_dev | id),
+  data = data_decomposed
+)
+
+summary(model_slopes)
+
+# -----------------------------------------------------
+# Compare models (random intercepts vs. random slopes)
+# -----------------------------------------------------
+# Evaluates whether allowing individual differences in within-person effects improves model fit.
+
+model.comparison(model_intercepts, model_slopes)
+anova(model_intercepts, model_slopes)
+
+# --------------------------------------------
+# Visualize effects of decomposed predictors
+# --------------------------------------------
+library(ggeffects)
+
+# Between-person Extraversion
+plot(ggpredict(model_slopes, terms = "tipm.E_mean [all]")) +
+  labs(title = "Between-Person Extraversion")
+
+# Within-person Extraversion
+plot(ggpredict(model_slopes, terms = "tipm.E_dev [all]")) +
+  labs(title = "Within-Person Extraversion")
+
+# Between-person Neuroticism
+plot(ggpredict(model_slopes, terms = "tipm.N_mean [all]")) +
+  labs(title = "Between-Person Neuroticism")
+
+# Within-person Neuroticism
+plot(ggpredict(model_slopes, terms = "tipm.N_dev [all]")) +
+  labs(title = "Within-Person Neuroticism")
+
+# ----------------------------------
+# Extract and report model details
+# ----------------------------------
+# Parameter estimates, confidence intervals, and p-values
+model_parameters(model_slopes, ci = 0.95)
+
+# Model fit: R² (marginal = fixed effects, conditional = fixed + random)
+model_performance(model_slopes)
+
+# ICC: Variance due to clustering by participant
+icc(model_slopes)
+
+# Residual diagnostics
+visualize(model_slopes, plot = "residuals")
+
+```
+
+Visualize participant-specific slopes (random slopes)
+
+```{r}
+# -----------------------------------------------------------
+# Extract individual random slopes for tipm.E_dev and tipm.N_dev
+# -----------------------------------------------------------
+library(tidyverse)
+
+# Get random effects from model
+ranef_df <- ranef(model_slopes)$id %>%
+  rownames_to_column(var = "id") %>%
+  as_tibble()
+
+# Add fixed effects to get each person’s total slope
+fixed <- fixef(model_slopes)
+
+ranef_df <- ranef_df %>%
+  mutate(
+    extraversion_slope = tipm.E_dev + fixed["tipm.E_dev"],
+    neuroticism_slope  = tipm.N_dev + fixed["tipm.N_dev"]
+  )
+
+# Reshape for plotting
+ranef_long <- ranef_df %>%
+  select(id, extraversion_slope, neuroticism_slope) %>%
+  pivot_longer(cols = c(extraversion_slope, neuroticism_slope),
+               names_to = "trait", values_to = "slope")
+
+# -----------------------------------------------------------
+# Plot person-specific slopes
+# -----------------------------------------------------------
+ggplot(ranef_long, aes(x = slope)) +
+  geom_histogram(bins = 30, fill = "gray", color = "black") +
+  facet_wrap(~ trait, scales = "free") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Distribution of Within-Person Slopes by Participant",
+       x = "Slope Estimate",
+       y = "Number of Participants") +
+  theme_minimal()
+
+```
